@@ -7,6 +7,8 @@ import xml.etree.ElementTree as ET
 
 
 GOOGLE_NEWS_SEARCH_RSS = "https://news.google.com/rss/search"
+KST = dt.timezone(dt.timedelta(hours=9))
+KOREAN_WEEKDAYS = ["월", "화", "수", "목", "금", "토", "일"]
 
 
 def _strip_html(raw_text: str) -> str:
@@ -25,6 +27,18 @@ def _parse_pub_date(pub_date: str) -> dt.datetime | None:
         )
     except ValueError:
         return None
+
+
+def _format_pub_date(pub_date: dt.datetime | None, fallback: str) -> str:
+    if not pub_date:
+        return fallback
+
+    local_time = pub_date.astimezone(KST)
+    weekday = KOREAN_WEEKDAYS[local_time.weekday()]
+    return (
+        f"{local_time.year:04d}년 {local_time.month:02d}월 {local_time.day:02d}일 "
+        f"{weekday}요일 {local_time.hour:02d}시 {local_time.minute:02d}분"
+    )
 
 
 def build_feed_url() -> str:
@@ -68,7 +82,7 @@ def fetch_recent_economic_news(limit: int = 10) -> list[dict[str, str]]:
                 "title": title,
                 "summary": summary if summary else "(요약 없음)",
                 "link": link,
-                "pub_date": pub_date_raw,
+                "pub_date": _format_pub_date(pub_date, pub_date_raw),
             }
         )
 
