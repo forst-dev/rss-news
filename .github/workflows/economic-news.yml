@@ -1,0 +1,23 @@
+name: Economic News RSS
+
+on:
+  schedule:
+    # UTC 기준 매일 00:00 실행 (한국 시간 09:00)
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+
+jobs:
+  fetch-news:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run economic news script
+        run: python scripts/fetch_economic_news.py
