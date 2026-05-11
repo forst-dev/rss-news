@@ -22,7 +22,7 @@ DAILY_RSS_URL = (
     "?hl=ko&gl=KR&ceid=KR:ko"
 )
 SEARCH_RSS_BASE = "https://news.google.com/rss/search"
-_LINK_DISPLAY_LIMIT = 120
+KST = timezone(timedelta(hours=9))
 
 _log = logging.getLogger(__name__)
 
@@ -76,9 +76,9 @@ def _tokenize_titles_for_counter(titles: list[str]) -> list[str]:
     return tokens
 
 
-def _top_keywords(titles: list[str], k: int = 3) -> list[str]:
+def _top_keywords(titles: list[str], k: int = 3) -> list[tuple[str, int]]:
     counter = Counter(_tokenize_titles_for_counter(titles))
-    return [word for word, _ in counter.most_common(k)]
+    return counter.most_common(k)
 
 
 def _split_headline_source(raw_title: str) -> tuple[str, str]:
@@ -89,11 +89,14 @@ def _split_headline_source(raw_title: str) -> tuple[str, str]:
     return raw_title, "출처 미상"
 
 
-def _ellipsis(text: str, limit: int) -> str:
-    text = (text or "").strip()
-    if limit <= 3 or len(text) <= limit:
-        return text
-    return text[: limit - 3].rstrip() + "..."
+def _format_pub_time(published: datetime | None) -> str:
+    if published is None:
+        return "시간 정보 없음"
+    local = published.astimezone(KST)
+    return (
+        f"{local.year:04d}년 {local.month:02d}월 {local.day:02d}일 "
+        f"{local.hour:02d}시 {local.minute:02d}분"
+    )
 
 
 def _fetch_entries(url: str) -> list[feedparser.FeedParserDict]:
@@ -124,6 +127,9 @@ def _normalized_articles(
         link = (e.get("link") or "").strip()
         if not raw_title:
             continue
+        published = _entry_published(e)
+        if published is None:
+            continue
         headline, outlet = _split_headline_source(raw_title)
         rows.append(
             {
@@ -131,7 +137,7 @@ def _normalized_articles(
                 "headline": headline,
                 "outlet": outlet,
                 "link": link,
-                "published": _entry_published(e),
+                "published": published,
             }
         )
     return rows
@@ -162,22 +168,21 @@ def _dedupe_sort_latest(articles: list[dict], limit: int) -> list[dict]:
 
 
 def _format_message(
-    keywords: list[str],
+    keywords: list[tuple[str, int]],
     picks: list[dict],
     footer: str,
 ) -> str:
     if keywords:
-        k1, k2, k3 = (keywords + ["-", "-", "-"])[:3]
-        kw_line = f"📊 오늘의 핵심 키워드: {k1}, {k2}, {k3}"
+        filled = (keywords + [("-", 0), ("-", 0), ("-", 0)])[:3]
+        rendered = [f"{word}({count})" for word, count in filled]
+        kw_line = f"📊 오늘의 핵심 키워드: {rendered[0]}, {rendered[1]}, {rendered[2]}"
     else:
         kw_line = "📊 오늘의 핵심 키워드: (추출할 제목이 없습니다)"
 
     body_lines: list[str] = []
     for i, a in enumerate(picks, start=1):
-        line = f"[{i}] {a['headline']} - {a['outlet']}"
-        if a["link"]:
-            display_link = _ellipsis(a["link"], _LINK_DISPLAY_LIMIT)
-            line += f" ({display_link})"
+        pub_time = _format_pub_time(a["published"])
+        line = f"[{i}] {a['outlet']} - {a['headline']} - {pub_time}"
         body_lines.append(line)
 
     if not body_lines:
