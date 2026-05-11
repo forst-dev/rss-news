@@ -32,6 +32,28 @@ _RSS_USER_AGENT = (
 
 _log = logging.getLogger(__name__)
 
+# 전체 문자열이 호스트명처럼 보이면 언론사로 보지 않음 (예: v.daum.net)
+_HOSTNAME_LIKE = re.compile(r"^[\w.-]+\.[a-zA-Z]{2,}$")
+# 언론사 문자열 안에 끼어 있는 도메인 패턴
+_DOMAIN_SNIPPET = re.compile(
+    r"\b[a-z0-9][a-z0-9.-]*\.(com|net|org|co\.kr|go\.kr|or\.kr|kr)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_valid_outlet(outlet: str) -> bool:
+    """도메인·URL 형태가 아닌 실제 언론사명으로 보일 때만 True."""
+    o = (outlet or "").strip()
+    if not o or o == "출처 미상":
+        return False
+    if "://" in o or o.lower().startswith("www."):
+        return False
+    if _HOSTNAME_LIKE.fullmatch(o):
+        return False
+    if _DOMAIN_SNIPPET.search(o):
+        return False
+    return True
+
 
 def _telegram_credentials() -> tuple[str, str]:
     token = (os.environ.get("TELEGRAM_TOKEN") or "").strip()
@@ -214,6 +236,8 @@ def _normalized_articles(
         if published is None:
             continue
         headline, outlet = _split_headline_source(raw_title)
+        if not _is_valid_outlet(outlet):
+            continue
         rows.append(
             {
                 "raw_title": raw_title,
@@ -349,8 +373,7 @@ def telegram_news(request):
         footer = f"키워드 '{keyword}'에 대한 검색 결과입니다."
 
     articles = _normalized_articles(entries)
-    all_titles = [a["raw_title"] for a in articles]
-    top_kw = _top_keywords(all_titles, 3)
+    top_kw = _top_keywords([a["headline"] for a in articles], 3)
     picks = _dedupe_sort_latest(articles, 10)
     message = _format_message(top_kw, picks, footer)
 
