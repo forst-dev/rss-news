@@ -104,8 +104,45 @@ def _tokenize_titles_for_counter(titles: list[str]) -> list[str]:
     return tokens
 
 
-def _top_keywords(titles: list[str], k: int = 3) -> list[tuple[str, int]]:
+def _token_norm_for_compare(tok: str) -> str:
+    t = unicodedata.normalize("NFKC", (tok or "").strip())
+    if re.fullmatch(r"[a-zA-Z]+", t):
+        return t.lower()
+    return t
+
+
+def _query_exclusion_keys(query: str) -> frozenset[str]:
+    """검색어에서 나온 토큰(핵심 키워드 집계에서 제외할 대상)."""
+    q = unicodedata.normalize("NFKC", (query or "").strip())
+    if not q:
+        return frozenset()
+    keys: set[str] = set()
+    for part in re.split(r"\s+", q):
+        part = part.strip()
+        if not part:
+            continue
+        for t in re.findall(r"[가-힣]{2,}|[a-zA-Z]{3,}", part):
+            keys.add(_token_norm_for_compare(t))
+        if re.fullmatch(r"[가-힣]{2,}", part):
+            keys.add(_token_norm_for_compare(part))
+        if re.fullmatch(r"[a-zA-Z]{2}", part):
+            keys.add(part.lower())
+    return frozenset(keys)
+
+
+def _top_keywords(
+    titles: list[str],
+    k: int = 3,
+    *,
+    exclude_query: str | None = None,
+) -> list[tuple[str, int]]:
     counter = Counter(_tokenize_titles_for_counter(titles))
+    if exclude_query:
+        banned = _query_exclusion_keys(exclude_query)
+        if banned:
+            for word in list(counter):
+                if _token_norm_for_compare(word) in banned:
+                    del counter[word]
     return counter.most_common(k)
 
 
@@ -373,7 +410,11 @@ def telegram_news(request):
         footer = f"키워드 '{keyword}'에 대한 검색 결과입니다."
 
     articles = _normalized_articles(entries)
-    top_kw = _top_keywords([a["headline"] for a in articles], 3)
+    headlines = [a["headline"] for a in articles]
+    if mode == "search":
+        top_kw = _top_keywords(headlines, 3, exclude_query=keyword or "")
+    else:
+        top_kw = _top_keywords(headlines, 3)
     picks = _dedupe_sort_latest(articles, 10)
     message = _format_message(top_kw, picks, footer)
 
