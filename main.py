@@ -7,7 +7,6 @@ from __future__ import annotations
 import logging
 import os
 import re
-import urllib.parse
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
@@ -21,7 +20,6 @@ DAILY_RSS_URL = (
     "CAAqIggKIhxDQklTR2dnTWFoWUtGbmRyYjI0dVpXNXpLQUFQAQ"
     "?hl=ko&gl=KR&ceid=KR:ko"
 )
-SEARCH_RSS_BASE = "https://news.google.com/rss/search"
 KST = timezone(timedelta(hours=9))
 
 _log = logging.getLogger(__name__)
@@ -118,6 +116,26 @@ def _filter_within_hours(
     return kept
 
 
+def _matches_keyword(entry: feedparser.FeedParserDict, keyword: str) -> bool:
+    """경제 섹션 피드 항목의 제목·요약에 검색어가 포함되는지 확인한다."""
+    needle = (keyword or "").strip()
+    if not needle:
+        return False
+    parts = [
+        entry.get("title") or "",
+        entry.get("summary") or "",
+        entry.get("description") or "",
+    ]
+    hay = " ".join(p for p in parts if p).lower()
+    return needle.lower() in hay
+
+
+def _filter_entries_by_keyword(
+    entries: list[feedparser.FeedParserDict], keyword: str
+) -> list[feedparser.FeedParserDict]:
+    return [e for e in entries if _matches_keyword(e, keyword)]
+
+
 def _normalized_articles(
     entries: list[feedparser.FeedParserDict],
 ) -> list[dict]:
@@ -188,7 +206,12 @@ def _format_message(
     if not body_lines:
         body_lines.append("(표시할 뉴스가 없습니다.)")
 
-    return "\n".join([kw_line, "", *body_lines, "", footer])
+    # 한 줄 작성 후 빈 줄로 구분 (키워드 줄 / 각 뉴스 / 하단 문구)
+    out: list[str] = [kw_line, ""]
+    for bl in body_lines:
+        out.extend([bl, ""])
+    out.append(footer)
+    return "\n".join(out)
 
 
 def _send_telegram(token: str, chat_id: str, text: str) -> None:
@@ -242,14 +265,10 @@ def telegram_news(request):
         entries = _filter_within_hours(entries, 24)
         footer = "오늘의 정기 리포트입니다."
     else:
-        params = {
-            "q": keyword,
-            "hl": "ko",
-            "gl": "KR",
-            "ceid": "KR:ko",
-        }
-        url = f"{SEARCH_RSS_BASE}?{urllib.parse.urlencode(params)}"
-        entries = _fetch_entries(url)
+        # 전역 검색 RSS 대신 경제 섹션 고정 피드에서만 키워드로 필터
+        entries = _fetch_entries(DAILY_RSS_URL)
+        entries = _filter_within_hours(entries, 24)
+        entries = _filter_entries_by_keyword(entries, keyword or "")
         footer = f"키워드 '{keyword}'에 대한 검색 결과입니다."
 
     articles = _normalized_articles(entries)
