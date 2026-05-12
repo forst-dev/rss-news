@@ -278,7 +278,7 @@ def _matches_keyword(entry: feedparser.FeedParserDict, keyword: str) -> bool:
     return all(_normalize_match_text(t) in hay_nf for t in terms)
 
 
-def _economy_keyword_search_url(user_keyword: str | None) -> str:
+def _economy_keyword_search_url(user_keyword: str | None = None) -> str:
     """경제 맥락 + 최근 1일"""
     q = f"{user_keyword or ''} 경제 when:1d"
     params = {"q": q, "hl": "ko", "gl": "KR", "ceid": "KR:ko"}
