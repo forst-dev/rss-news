@@ -34,6 +34,7 @@ _RSS_USER_AGENT = (
     "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
 )
 
+logging.basicConfig(level=logging.INFO)
 _log = logging.getLogger(__name__)
 
 # 전체 문자열이 호스트명처럼 보이면 언론사로 보지 않음 (예: v.daum.net)
@@ -265,20 +266,6 @@ def _fetch_entries(url: str) -> list[feedparser.FeedParserDict]:
     return entries
 
 
-def _filter_within_hours(
-    entries: list[feedparser.FeedParserDict], hours: int
-) -> list[feedparser.FeedParserDict]:
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
-    kept: list[feedparser.FeedParserDict] = []
-    for e in entries:
-        pub = _entry_published(e)
-        if pub is None:
-            continue
-        if pub >= cutoff:
-            kept.append(e)
-    return kept
-
-
 def _matches_keyword(entry: feedparser.FeedParserDict, keyword: str) -> bool:
     """항목 제목·요약·본문 평문에 검색어(공백 분리 시 모두)가 포함되는지 확인한다."""
     raw = (keyword or "").strip()
@@ -296,9 +283,9 @@ def _matches_keyword(entry: feedparser.FeedParserDict, keyword: str) -> bool:
     return all(_normalize_match_text(t) in hay_nf for t in terms)
 
 
-def _economy_keyword_search_url(user_keyword: str) -> str:
-    """섹션 피드만으로는 0건일 때 쓰는 보조 검색(경제 맥락 + 최근 1일)."""
-    q = f"{user_keyword.strip()} 경제 when:1d"
+def _economy_keyword_search_url(user_keyword: str | None) -> str:
+    """경제 맥락 + 최근 1일"""
+    q = f"{user_keyword or ''} 경제 when:1d"
     params = {"q": q, "hl": "ko", "gl": "KR", "ceid": "KR:ko"}
     return f"{SEARCH_RSS_BASE}?{urllib.parse.urlencode(params)}"
 
@@ -377,7 +364,6 @@ def _pipeline_diagnostic_line(
     norm_stats: dict[str, int],
     n_picks: int,
     *,
-    used_alt_search: bool = False,
 ) -> str:
     """표시 뉴스 0건일 때 텔레그램에 붙이는 한 블록 요약."""
     bits: list[str] = []
@@ -395,8 +381,6 @@ def _pipeline_diagnostic_line(
         f"언론사제외 {norm_stats.get('bad_outlet', 0)})"
     )
     bits.append(f"노출 {n_picks}건")
-    if mode == "search" and used_alt_search:
-        bits.append("보조검색RSS사용")
 
     if fetch is None:
         verdict = "→ RSS 수집 메타를 확인하지 못했습니다."
@@ -514,36 +498,24 @@ def telegram_news(request):
         return ("OK", 200)
 
     fetch_report: RSSFetchReport | None = None
-    used_alt_search = False
     n_after_hours = 0
 
     if mode == "daily":
-        raw_entries, fetch_report = _fetch_entries_with_report(DAILY_RSS_URL)
-        entries = _filter_within_hours(raw_entries, 24)
+        entries, fetch_report = _fetch_entries_with_report(_economy_keyword_search_url())
         n_after_hours = len(entries)
         footer = "오늘의 정기 리포트입니다."
     else:
         kw = (keyword or "").strip()
-        # 1) 경제 섹션 RSS → 24시간 → 키워드 (제목·요약 평문 매칭)
-        raw_sec, fetch_report = _fetch_entries_with_report(DAILY_RSS_URL)
-        section_entries = _filter_within_hours(raw_sec, 24)
+        # 1) 경제 섹션 RSS → 이전 하루 → 키워드 (제목·요약 평문 매칭)
+        section_entries, fetch_report = _fetch_entries_with_report(_economy_keyword_search_url(kw))
         n_after_hours = len(section_entries)
         entries = _filter_entries_by_keyword(section_entries, kw)
-        if not entries:
-            # 2) 섹션 피드만으로는 최근 24시간·키워드 조합이 비는 경우가 많아
-            #    동일 키워드로 '경제 + when:1d' 검색 RSS를 보조 소스로 사용한다.
-            raw_alt, alt_rep = _fetch_entries_with_report(_economy_keyword_search_url(kw))
-            fetch_report = alt_rep
-            used_alt_search = True
-            alt_24 = _filter_within_hours(raw_alt, 24)
-            n_after_hours = len(alt_24)
-            entries = _filter_entries_by_keyword(alt_24, kw)
-            if entries:
-                _log.info(
-                    "keyword search: section feed had 0 hits; used economy search RSS "
-                    "(section_24h=%s)",
-                    len(section_entries),
-                )
+        if entries:
+            _log.info(
+                "keyword search: section feed had 0 hits; used economy search RSS "
+                "(section_1d=%s)",
+                len(section_entries),
+            )
         footer = f"키워드 '{keyword}'에 대한 검색 결과입니다."
 
     articles, norm_stats = _normalized_articles(entries)
@@ -562,7 +534,6 @@ def telegram_news(request):
             n_after_hours,
             norm_stats,
             len(picks),
-            used_alt_search=used_alt_search,
         )
 
     _log.info(
