@@ -261,11 +261,6 @@ def _fetch_entries_with_report(url: str) -> tuple[list[feedparser.FeedParserDict
     return entries, report
 
 
-def _fetch_entries(url: str) -> list[feedparser.FeedParserDict]:
-    entries, _ = _fetch_entries_with_report(url)
-    return entries
-
-
 def _matches_keyword(entry: feedparser.FeedParserDict, keyword: str) -> bool:
     """항목 제목·요약·본문 평문에 검색어(공백 분리 시 모두)가 포함되는지 확인한다."""
     raw = (keyword or "").strip()
@@ -362,8 +357,7 @@ def _pipeline_diagnostic_line(
     fetch: RSSFetchReport | None,
     n_after_hours: int,
     norm_stats: dict[str, int],
-    n_picks: int,
-    *,
+    n_picks: int
 ) -> str:
     """표시 뉴스 0건일 때 텔레그램에 붙이는 한 블록 요약."""
     bits: list[str] = []
@@ -533,7 +527,7 @@ def telegram_news(request):
             fetch_report,
             n_after_hours,
             norm_stats,
-            len(picks),
+            len(picks)
         )
 
     _log.info(
